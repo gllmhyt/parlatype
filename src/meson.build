@@ -41,6 +41,11 @@ if host_machine.system() == 'windows'
 	)
 
 	src += windows.compile_resources(rc)
+
+	src += [
+	'pt-win32-clipboard.c',
+	'pt-win32-clipboard.h',
+	]
 endif
 
 parlatype_deps = [
