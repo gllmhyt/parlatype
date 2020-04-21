@@ -93,20 +93,20 @@ pt_win32clibboard_copydata_cb (HWND main_window_handle,
 			if (!timestamp)
 				timestamp = "";
 			COPYDATASTRUCT cds;
-			cds.dwData = RESPONSE_TIMESTAMP
-			cds.cbData = sizeof(TCHAR) * (_tcslen(timestamp) + 1);
+			cds.dwData = RESPONSE_TIMESTAMP;
+			cds.cbData = sizeof(TCHAR) * (strlen(timestamp) + 1);
 			cds.lpData = timestamp;
-			SendMessage(wParam, WM_COPYDATA, (WPARAM)hwnd, (LPARAM)(LPVOID)&cds);
+			SendMessage((HWND)wParam, WM_COPYDATA, (WPARAM)(HWND)main_window_handle, (LPARAM)(LPVOID)&cds);
 			break;
 		case GET_URI:
 			uri = pt_player_get_uri (player);
 			if (!uri)
 				uri = "";
 			COPYDATASTRUCT cds;
-			cds.dwData = RESPONSE_URI
-			cds.cbData = sizeof(TCHAR) * (_tcslen(uri) + 1);
+			cds.dwData = RESPONSE_URI;
+			cds.cbData = sizeof(TCHAR) * (strlen(uri) + 1);
 			cds.lpData = uri;
-			SendMessage(wParam, WM_COPYDATA, (WPARAM)hwnd, (LPARAM)(LPVOID)&cds);
+			SendMessage((HWND)wParam, WM_COPYDATA, (WPARAM)(HWND)main_window_handle, (LPARAM)(LPVOID)&cds);
 			break;
 		default:
 			break;
@@ -131,7 +131,7 @@ message_handler (HWND hwnd,
 			(uintptr_t) GetWindowLongPtr (hwnd, GWLP_USERDATA);
 	pt_win32clibboard_copydata_cb (hwnd, wParam, lParam, self);
 
-	//TODO which return value?
+	return TRUE;
 }
 
 void
@@ -143,7 +143,6 @@ static void
 pt_win32clipboard_init (PtWin32clipboard *self)
 {
 	self->priv = pt_win32clipboard_get_instance_private (self);
-
 	WNDCLASS wc;
 
 	//self->priv->class_name = TEXT("ParlatypeWND");
@@ -155,8 +154,9 @@ pt_win32clipboard_init (PtWin32clipboard *self)
 	if (!RegisterClass(&wc)) {
 		g_print ("Window class registration failed\n");
 		return;
+	}
 
-	self->priv->hwnd = CreateWindow(WND_CLASS_NAME,
+	self->priv->hwnd = CreateWindow("ParlatypeWND",
 	                                TEXT("ParlatypeWIN32"),	/* title */
 	                                0,			/* window style */
 	                                0, 0,			/* x and y coordinates */
@@ -167,12 +167,11 @@ pt_win32clipboard_init (PtWin32clipboard *self)
 	                                NULL);
 	if(!self->priv->hwnd) {
 		g_print ("Can't create hidden window\n");
-		UnregisterClass(self->priv->class_name, NULL);
+		UnregisterClass(WND_CLASS_NAME, NULL);
 		return;
 	}
 	SetWindowLongPtr(self->priv->hwnd, GWLP_USERDATA, (uintptr_t)self);
 	g_print ("Created hidden window\n");
-	}
 }
 
 static void
