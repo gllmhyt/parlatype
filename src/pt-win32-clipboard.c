@@ -52,26 +52,63 @@ enum
 
 G_DEFINE_TYPE_WITH_PRIVATE (PtWin32clipboard, pt_win32clipboard, PT_CONTROLLER_TYPE)
 
+/*
+ * LogLastWinError
+ *
+ * Log the last Windows error as returned by
+ * GetLastError.
+ *
+ * Taken from gimp-2.10.8/plug-ins/twain/tw_win.c
+ * Copyright (C) 1999 Craig Setera, GPL-3+
+ */
+void
+LogLastWinError (void)
+{
+	LPVOID lpMsgBuf;
+
+	FormatMessage (
+		FORMAT_MESSAGE_ALLOCATE_BUFFER |
+		FORMAT_MESSAGE_FROM_SYSTEM |
+		FORMAT_MESSAGE_IGNORE_INSERTS,
+		NULL,
+		GetLastError (),
+		MAKELANGID (LANG_NEUTRAL, SUBLANG_DEFAULT), /* Default language */
+		(LPTSTR) &lpMsgBuf,
+		0,
+		NULL
+		);
+
+	LogMessage ("%s\n", lpMsgBuf);
+
+	/* Free the buffer. */
+	LocalFree (lpMsgBuf);
+}
+
+
 static void
-pt_win32clibboard_copydata_cb (HWND main_window_handle,
-			       WPARAM wParam,
-			       LPARAM lparam,
+pt_win32clibboard_copydata_cb (HWND              window,
+			       WPARAM            sender,
+			       LPARAM            data,
 			       PtWin32clipboard *self)
 {
-	PtPlayer *player = pt_controller_get_player (PT_CONTROLLER (self));
-	gchar *timestamp;
-	gdouble value;
+	PtPlayer  *player = pt_controller_get_player (PT_CONTROLLER (self));
+	gchar     *senddata;
+	gunichar2 *senddata_utf16;
+	gdouble    value;
 
-	//Copy the information sent via lparam param into a structure
-	COPYDATASTRUCT* copy_data_structure = {0};
-	copy_data_structure = (COPYDATASTRUCT*)lparam;
+	COPYDATASTRUCT *copydata = (COPYDATASTRUCT*) data;
+	COPYDATASTRUCT  response;
 
-	switch (copy_data_structure->dwData) {
+	/*  TODO what about this?
+	if (copydata->cbData == 0)
+		return;*/
+
+	switch (copydata->dwData) {
 		case PLAY_PAUSE:
 			pt_player_play_pause (player);
 			break;
 		case GOTO_TIMESTAMP:
-			timestamp = (gchar*)copy_data_structure->lpData;
+			timestamp = (gchar*) copydata->lpData;
 			pt_player_goto_timestamp (player, timestamp);
 			break;
 		case JUMP_BACK:
@@ -89,24 +126,33 @@ pt_win32clibboard_copydata_cb (HWND main_window_handle,
 			pt_player_set_speed (player, value + 0.1);
 			break;
 		case GET_TIMESTAMP:
-			timestamp = pt_player_get_timestamp (player);
-			if (!timestamp)
-				timestamp = "";
-			COPYDATASTRUCT cds;
-			cds.dwData = RESPONSE_TIMESTAMP;
-			cds.cbData = sizeof(TCHAR) * (strlen(timestamp) + 1);
-			cds.lpData = timestamp;
-			SendMessage((HWND)wParam, WM_COPYDATA, (WPARAM)(HWND)main_window_handle, (LPARAM)(LPVOID)&cds);
+			/* TODO can we send NULL? */
+			senddata = pt_player_get_timestamp (player);
+			if (!senddata)
+				senddata = "";
+			response.dwData = RESPONSE_TIMESTAMP;
+			response.cbData = sizeof (TCHAR) * (strlen (senddata) + 1); /* TODO check strlen vs g_utf8_strlen */
+			response.lpData = senddata;
+			SendMessage ((HWND) sender, WM_COPYDATA,
+				     (WPARAM) (HWND) window,
+				     (LPARAM) (LPVOID) &response);
+			if (senddata[0] != '\0')
+				g_free (senddata);
 			break;
 		case GET_URI:
-			uri = pt_player_get_uri (player);
-			if (!uri)
-				uri = "";
-			COPYDATASTRUCT cds;
-			cds.dwData = RESPONSE_URI;
-			cds.cbData = sizeof(TCHAR) * (strlen(uri) + 1);
-			cds.lpData = uri;
-			SendMessage((HWND)wParam, WM_COPYDATA, (WPARAM)(HWND)main_window_handle, (LPARAM)(LPVOID)&cds);
+			senddata = pt_player_get_uri (player);
+			if (!senddata)
+				senddata = "";
+			senddata_utf16 = g_utf8_to_utf16 (uri, -1, NULL, NULL, NULL);
+			response.dwData = RESPONSE_URI;
+			response.cbData = sizeof (WCHAR) * (g_utf8_strlen (senddata, -1) + 1);
+			response.lpData = senddata_utf16;
+			SendMessage ((HWND) sender, WM_COPYDATA,
+				     (WPARAM) (HWND) window,
+				     (LPARAM) (LPVOID) &response);
+			if (senddata[0] != '\0')
+				g_free (senddata);
+			g_free (senddata_utf16);
 			break;
 		default:
 			break;
@@ -126,7 +172,8 @@ message_handler (HWND hwnd,
 	if (Message != WM_COPYDATA)
 		return DefWindowProc (hwnd, Message, wParam, lParam);
 
-	g_print ("message handler: WM_COPYDATA\n");
+	g_log_structured (G_LOG_DOMAIN, G_LOG_LEVEL_DEBUG,
+		          "MESSAGE", "message handler: WM_COPYDATA");
 	PtWin32clipboard *self = (PtWin32clipboard*)
 			(uintptr_t) GetWindowLongPtr (hwnd, GWLP_USERDATA);
 	pt_win32clibboard_copydata_cb (hwnd, wParam, lParam, self);
@@ -145,33 +192,37 @@ pt_win32clipboard_init (PtWin32clipboard *self)
 	self->priv = pt_win32clipboard_get_instance_private (self);
 	WNDCLASS wc;
 
-	//self->priv->class_name = TEXT("ParlatypeWND");
-	memset(&wc, 0, sizeof(WNDCLASS));
-	wc.lpfnWndProc	= message_handler;
-	wc.hInstance	= GetModuleHandle(NULL);
-	wc.lpszClassName = TEXT(WND_CLASS_NAME);
+	memset (&wc, 0, sizeof (wc));
+	wc.lpfnWndProc	 = message_handler;
+	wc.hInstance	 = GetModuleHandle (NULL);
+	wc.lpszClassName = WND_CLASS_NAME;
 
 	if (!RegisterClass(&wc)) {
-		g_print ("Window class registration failed\n");
+		LogLastWinError ();
 		return;
 	}
 
+	/* TODO Try L"ParlatypeWIN32" and TEXT ("ParlatypeWIN32") */
 	self->priv->hwnd = CreateWindow("ParlatypeWND",
-	                                TEXT("ParlatypeWIN32"),	/* title */
+	                                "ParlatypeWIN32",	/* title */
 	                                0,			/* window style */
 	                                0, 0,			/* x and y coordinates */
 	                                0, 0,			/* with and height */
 	                                NULL,			/* parent window */
 	                                NULL,			/* menu */
-	                                GetModuleHandle(NULL),
+	                                wc.hInstance,
 	                                NULL);
-	if(!self->priv->hwnd) {
-		g_print ("Can't create hidden window\n");
+
+	if (!self->priv->hwnd) {
+		g_log_structured (G_LOG_DOMAIN, G_LOG_LEVEL_WARNING,
+			          "MESSAGE", "Can't create hidden window");
 		UnregisterClass(WND_CLASS_NAME, NULL);
 		return;
 	}
-	SetWindowLongPtr(self->priv->hwnd, GWLP_USERDATA, (uintptr_t)self);
-	g_print ("Created hidden window\n");
+
+	SetWindowLongPtr (self->priv->hwnd, GWLP_USERDATA, (uintptr_t) self);
+	g_log_structured (G_LOG_DOMAIN, G_LOG_LEVEL_DEBUG,
+		          "MESSAGE", "Created hidden window");
 }
 
 static void
@@ -181,7 +232,6 @@ pt_win32clipboard_dispose (GObject *object)
 
 	if (self->priv->hwnd)
 		DestroyWindow (self->priv->hwnd);
-	//UnregisterClass (WND_CLASS_NAME, NULL);
 
 	G_OBJECT_CLASS (pt_win32clipboard_parent_class)->dispose (object);
 }
